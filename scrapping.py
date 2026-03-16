@@ -1,69 +1,40 @@
-import pandas as pd 
 import time
 import logging
-import oracledb
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait 
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-from bs4 import BeautifulSoup
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("analisis_precios.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+def configurar_driver():
+    chrome_options = Options()
+    # chrome_options.add_argument("--headless")
+    return webdriver.Chrome(options=chrome_options)
 
-USER = "system"
-PASSWORD = "system"
-DSN = "localhost:1521/XE"
-
-# 1. Configuración de Chrome
-chrome_options = Options()
-# chrome_options.add_argument("--headless") # Descomenta esto para que no se abra la ventana
-
-driver = webdriver.Chrome(options=chrome_options)
-
-termino = "smartphones" # Se puede cambiar por lo que se quiera buscar
-
-def scrapear_lider(termino_busqueda):
-    # Ir a la página principal primero para establecer la sesión
+def realizar_scraping(driver, termino_busqueda):
     driver.get("https://www.lider.cl/supermercado/")
     productos_lista = []
     
     try:
         wait = WebDriverWait(driver, 10)
+        logging.info(f"Iniciando busqueda de: {termino_busqueda}")
         
-
-        logging.info(f"Iniciando busqueda de:{termino_busqueda}")
         search_input = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div/div[1]/span/header/form/div/input")))
-        
-        # 2. Escribir el término y presionar Enter
         search_input.clear()
         search_input.send_keys(termino_busqueda)
-        search_input.submit() # Esto simula el "Enter"
+        search_input.submit()
         
-        logging.info(f"Esperando que carguen lso resultados para: {termino_busqueda}")
         wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div/div[1]/div/div/div[1]/main/div/div[2]/div/div/div[1]/div/section/div/div[2]")))
-
-        logging.info("Resultados cargados, realizando scroll...")
         driver.execute_script("window.scrollBy(0, 800);")
         time.sleep(3)
 
-        # 5. Capturar los productos
         productos = driver.find_elements(By.CSS_SELECTOR, "div.flex.flex-wrap.w-100.flex-grow-0.flex-shrink-0.ph2.pr0-xl.pl4-xl.mt0-xl>div")
-        logging.info(f"Se detectaron {len(productos)} elementos en el DOM.")
-
+        
         for p in productos:
             try:
-                nombre = p.find_element(By.CSS_SELECTOR, "div.flex.flex-wrap.w-100.flex-grow-0.flex-shrink-0.ph2.pr0-xl.pl4-xl.mt0-xl>div>div>div>div>div>div>span>span").text
-                marca = p.find_element(By.CSS_SELECTOR, "div.flex.flex-wrap.w-100.flex-grow-0.flex-shrink-0.ph2.pr0-xl.pl4-xl.mt0-xl>div>div>div>div>div>div> div.mb1.mt2.b.f6.black.mr1.lh-copy").text
-                precio = p.find_element(By.CSS_SELECTOR, "div.flex.flex-wrap.w-100.flex-grow-0.flex-shrink-0.ph2.pr0-xl.pl4-xl.mt0-xl>div>div>div>div>div>div>div>div>div.mr1.mr2-xl.b.black.lh-copy.f5.f4-l").text
+                nombre = p.find_element(By.CSS_SELECTOR, "span.product-card_name").text
+                marca = p.find_element(By.CSS_SELECTOR, "div.mb1.mt2.b.f6.black.mr1.lh-copy").text
+                precio = p.find_element(By.CSS_SELECTOR, "div.mr1.mr2-xl.b.black.lh-copy.f5.f4-l").text
                 
                 if nombre and precio and marca:
                     productos_lista.append({
@@ -73,46 +44,11 @@ def scrapear_lider(termino_busqueda):
                     })
             except:
                 continue 
-
+                
     except Exception as e:
-        logging.error(f"Error durante el scraping: {e}")
-    
+        logging.error(f"Error en scraper.py: {e}")
+        
     return productos_lista
-
-# --- EJECUCIÓN ---
-datos = scrapear_lider(termino)
-
-df = pd.DataFrame(datos)
-df['Precio'] = pd.to_numeric(df['Precio'], errors='coerce').fillna(0).astype(int)
-
-try:
-    logging.info("Conectando a Oracle 21c...")
-    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=DSN)
-    cursor = connection.cursor()
-
-    # 4. Preparar los datos para la inserción masiva
-    # Convertimos el DataFrame en una lista de tuplas
-    registros = list(df.itertuples(index=False, name=None))
-
-    # 5. Ejecutar la inserción
-    sql = "INSERT INTO Smartphone_Lider (NOMBRE, PRECIO, MARCA) VALUES (:1, :2, :3)"
-    
-    cursor.executemany(sql, registros)
-    connection.commit()
-
-    logging.info(f"✅ Éxito: Se insertaron {len(registros)} registros en Smartphone_Lider.")
-
-except Exception as e:
-    logging.error(f"❌ Fallo en el proceso: {e}")
-
-finally:
-    if 'cursor' in locals():
-        cursor.close()
-    if 'connection' in locals():
-        connection.close()
-    driver.quit()
-    logging.info("Proceso finalizado y recursos liberados.")
-
 # 2. Guardar con Pandas
 #if datos:
 #    df = pd.DataFrame(datos)
